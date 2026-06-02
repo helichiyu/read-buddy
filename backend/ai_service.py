@@ -261,6 +261,7 @@ async def build_system_prompt() -> str:
   - 你想推荐书籍 → 必须调用 recommend_books
   - 用户想聊某本书 → 必须调用 discuss_book
 - 不调用工具函数的话，书籍不会被真正添加到数据库和右侧书架
+- **用户在对话中提出个人偏好时（如"不要用表情包"、"回复简洁点"、"我喜欢XX类型"），必须调用 save_preference 保存**，这样下次对话会自动读取这些偏好。不要只是在回复里说"好的"，一定要调用工具保存
 """
     return prompt
 

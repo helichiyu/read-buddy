@@ -208,6 +208,26 @@ async def _handle_tool_call(name: str, args: dict, books_changed: list) -> dict:
                 await db.update_book_details(book_id, series_name=series_name, series_index=series_index)
         else:
             book_id = await db.add_book(title=title, author=author, status="rated", series_name=series_name, series_index=series_index)
+        # 尝试从豆瓣获取详情（封面、简介等）
+        try:
+            from book_service import search as search_book
+            query = f"{title} {author}".strip()
+            book_info = await search_book(query)
+            if book_info:
+                await db.update_book_details(
+                    book_id,
+                    cover_url=book_info.get("cover_url", ""),
+                    description=book_info.get("description", ""),
+                    isbn=book_info.get("isbn", ""),
+                    categories=book_info.get("categories", ""),
+                    author=book_info.get("author", "") or author,
+                )
+        except Exception:
+            pass  # API 失败不影响主流程
+        await db.add_rating(book_id, stars, review)
+        book = await db.get_book(book_id)
+        books_changed.append({"action": "rated", **book})
+        return {"ok": True, "message": f"已记录《{title}》的评价：{stars}星"} await db.add_book(title=title, author=author, status="rated", series_name=series_name, series_index=series_index)
         await db.add_rating(book_id, stars, review)
         books_changed.append({"action": "rated", "title": title, "stars": stars})
         return {"ok": True, "message": f"已记录《{title}》的评价：{stars}星"}

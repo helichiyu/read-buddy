@@ -1,0 +1,17 @@
+[project]
+name = "read-buddy"
+version = "0.1.0"
+description = "AI 驱动的书籍阅读记录与推荐工具"
+requires-python = ">=3.14"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "fastapi>=0.136.3",
+    "httpx>=0.28.1",
+    "openai>=2.40.0",
+    "pywebview>=6.2.1",
+    "uvicorn>=0.48.0",
+]
+
+[tool.uv]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+link-mode = "copy"

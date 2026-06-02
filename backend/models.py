@@ -12,6 +12,8 @@ class Book(BaseModel):
     description: str = ""
     isbn: str = ""
     categories: str = ""
+    series_name: str = ""   # 系列名称（如"三体"、"哈利·波特"）
+    series_index: int = 0   # 系列中的序号（1=第一部，2=第二部）
     # 状态：suggested（推荐中）| pending（待阅读）| rated（已评价）| not_interested（不想看）
     status: str = "suggested"
     recommend_reason: str = ""

@@ -11,6 +11,12 @@ import database as db
 
 app = FastAPI(title="Read Buddy")
 
+
+def _today() -> str:
+    """返回今天的日期字符串 YYYYMMDD"""
+    from datetime import datetime
+    return datetime.now().strftime("%Y%m%d")
+
 # 静态文件目录
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
@@ -177,8 +183,26 @@ async def _handle_tool_call(name: str, args: dict, books_changed: list) -> dict:
         title = args.get("book_title", "")
         stars = args.get("stars", 0)
         review = args.get("review", "")
-        # 查找或创建书籍
-        book_id = await db.add_book(title=title, status="rated")
+        author = args.get("author", "")
+        series_name = args.get("series_name", "")
+        series_index = args.get("series_index", 0)
+        # 查找是否已有同名书籍
+        all_books = await db.get_all_books()
+        existing = None
+        for b in all_books:
+            if b["title"] == title and b.get("series_index", 0) == series_index:
+                existing = b
+                break
+        if existing:
+            # 已存在，更新状态为 rated 并添加评价
+            book_id = existing["id"]
+            await db.update_book_status(book_id, "rated")
+            if author and not existing.get("author"):
+                await db.update_book_details(book_id, author=author)
+            if series_name and not existing.get("series_name"):
+                await db.update_book_details(book_id, series_name=series_name, series_index=series_index)
+        else:
+            book_id = await db.add_book(title=title, author=author, status="rated", series_name=series_name, series_index=series_index)
         await db.add_rating(book_id, stars, review)
         books_changed.append({"action": "rated", "title": title, "stars": stars})
         return {"ok": True, "message": f"已记录《{title}》的评价：{stars}星"}
@@ -191,6 +215,8 @@ async def _handle_tool_call(name: str, args: dict, books_changed: list) -> dict:
                 "title": b.get("title", ""),
                 "author": b.get("author", ""),
                 "reason": b.get("reason", ""),
+                "series_name": b.get("series_name", ""),
+                "series_index": b.get("series_index", 0),
             })
         return {"ok": True, "message": f"已推荐 {len(books)} 本书，等待用户回应"}
 
@@ -198,7 +224,25 @@ async def _handle_tool_call(name: str, args: dict, books_changed: list) -> dict:
         title = args.get("book_title", "")
         author = args.get("author", "")
         reason = args.get("reason", "")
-        book_id = await db.add_book(title=title, author=author, reason=reason, status="pending")
+        series_name = args.get("series_name", "")
+        series_index = args.get("series_index", 0)
+        book_id = await db.add_book(title=title, author=author, reason=reason, status="pending", series_name=series_name, series_index=series_index)
+        # 尝试从 Google Books 获取详情（封面、简介等）
+        try:
+            from book_service import search as search_book
+            query = f"{title} {author}".strip()
+            book_info = await search_book(query)
+            if book_info:
+                await db.update_book_details(
+                    book_id,
+                    cover_url=book_info.get("cover_url", ""),
+                    description=book_info.get("description", ""),
+                    isbn=book_info.get("isbn", ""),
+                    categories=book_info.get("categories", ""),
+                    author=book_info.get("author", "") or author,
+                )
+        except Exception:
+            pass  # API 失败不影响主流程
         book = await db.get_book(book_id)
         books_changed.append({"action": "accepted", **book})
         return {"ok": True, "message": f"《{title}》已加入待阅读列表"}
@@ -229,6 +273,15 @@ async def _handle_tool_call(name: str, args: dict, books_changed: list) -> dict:
         topic = args.get("topic", "")
         books_changed.append({"action": "discuss", "title": title, "topic": topic})
         return {"ok": True, "message": f"开始聊《{title}》"}
+
+    elif name == "save_preference":
+        category = args.get("category", "其他个性化要求")
+        content = args.get("content", "")
+        if content:
+            from preferences import append_preference
+            append_preference(category, content)
+            return {"ok": True, "message": f"已保存偏好：{content}"}
+        return {"ok": False, "message": "偏好内容为空"}
 
     return {"ok": False, "message": "未知操作"}
 
@@ -303,9 +356,84 @@ async def get_token_usage():
 
 @app.get("/api/export")
 async def export_data():
-    """导出全部数据为 JSON"""
+    """导出全部数据为 JSON（返回数据，前端下载用）"""
     data = await db.export_all()
     return data
+
+
+@app.post("/api/export-to-file")
+async def export_to_file():
+    """弹出 Windows 原生保存对话框，导出数据到用户选择的路径"""
+    import tkinter as tk
+    from tkinter import filedialog
+    import json
+
+    data = await db.export_all()
+    json_str = json.dumps(data, ensure_ascii=False, indent=2)
+
+    # 在主线程外弹对话框（用临时隐藏窗口）
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    filepath = filedialog.asksaveasfilename(
+        parent=root,
+        title="导出 Read Buddy 存档",
+        defaultextension=".json",
+        filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
+        initialfile=f"readbuddy_backup_{_today()}.json",
+    )
+    root.destroy()
+
+    if not filepath:
+        return {"ok": False, "message": "用户取消"}
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(json_str)
+
+    return {
+        "ok": True,
+        "message": f"已导出到 {filepath}",
+        "path": filepath,
+        "books": len(data.get("books", [])),
+        "ratings": len(data.get("ratings", [])),
+        "messages": len(data.get("messages", [])),
+    }
+
+
+@app.post("/api/import-from-file")
+async def import_from_file():
+    """弹出 Windows 原生打开对话框，从用户选择的文件导入"""
+    import tkinter as tk
+    from tkinter import filedialog
+    import json
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    filepath = filedialog.askopenfilename(
+        parent=root,
+        title="导入 Read Buddy 存档",
+        filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
+    )
+    root.destroy()
+
+    if not filepath:
+        return {"ok": False, "message": "用户取消"}
+
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+        data = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        return {"ok": False, "message": f"文件读取失败：{e}"}
+
+    if "version" not in data:
+        return {"ok": False, "message": "无效的备份文件格式（缺少 version 字段）"}
+
+    result = await db.import_all(data)
+    result["ok"] = True
+    result["path"] = filepath
+    return result
 
 
 @app.post("/api/import")

@@ -122,38 +122,31 @@ const Settings = {
     document.getElementById("token-total").textContent = totalTokens;
   },
 
-  /** 导出数据 */
+  /** 导出数据（调用 Windows 原生保存对话框） */
   async exportData() {
     try {
-      const data = await API.exportData();
-      alert(`导出成功！共 ${data.books?.length || 0} 本书，${data.ratings?.length || 0} 条评价，${data.messages?.length || 0} 条消息。`);
+      const result = await API.request("POST", "/api/export-to-file");
+      if (result.ok) {
+        alert(`导出成功！\n${result.books} 本书，${result.ratings} 条评价，${result.messages} 条消息\n已保存到：${result.path}`);
+      }
     } catch (e) {
       alert("导出失败：" + e.message);
     }
   },
 
-  /** 导入数据 */
+  /** 导入数据（调用 Windows 原生打开对话框） */
   async importData() {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".json";
-    input.onchange = async () => {
-      const file = input.files[0];
-      if (!file) return;
-      if (!confirm("导入将覆盖现有数据，确定吗？")) return;
-      try {
-        const result = await API.importData(file);
-        if (result.error) {
-          alert("导入失败：" + result.error);
-        } else {
-          alert(`导入成功！${result.books || 0} 本书，${result.ratings || 0} 条评价，${result.messages || 0} 条消息。`);
-          // 重新加载界面
-          await App.reload();
-        }
-      } catch (e) {
-        alert("导入失败：" + e.message);
+    if (!confirm("导入将覆盖现有数据，确定吗？")) return;
+    try {
+      const result = await API.request("POST", "/api/import-from-file");
+      if (result.ok) {
+        alert(`导入成功！\n${result.books || 0} 本书，${result.ratings || 0} 条评价，${result.messages || 0} 条消息`);
+        await App.reload();
+      } else if (result.message && result.message !== "用户取消") {
+        alert("导入失败：" + result.message);
       }
-    };
-    input.click();
+    } catch (e) {
+      alert("导入失败：" + e.message);
+    }
   },
 };

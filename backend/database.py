@@ -33,6 +33,8 @@ async def init_db():
                 description TEXT DEFAULT '',
                 isbn TEXT DEFAULT '',
                 categories TEXT DEFAULT '',
+                series_name TEXT DEFAULT '',
+                series_index INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'suggested',
                 recommend_reason TEXT DEFAULT '',
                 reject_reasons TEXT DEFAULT '[]',
@@ -126,13 +128,13 @@ async def get_book(book_id: int) -> Optional[dict]:
         await db.close()
 
 
-async def add_book(title: str, author: str = "", reason: str = "", status: str = "suggested") -> int:
+async def add_book(title: str, author: str = "", reason: str = "", status: str = "suggested", series_name: str = "", series_index: int = 0) -> int:
     """添加书籍，返回 ID"""
     db = await get_db()
     try:
         cursor = await db.execute(
-            "INSERT INTO books (title, author, recommend_reason, status, created_at) VALUES (?, ?, ?, ?, ?)",
-            (title, author, reason, status, _now()),
+            "INSERT INTO books (title, author, recommend_reason, status, series_name, series_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (title, author, reason, status, series_name, series_index, _now()),
         )
         await db.commit()
         return cursor.lastrowid
@@ -184,7 +186,7 @@ async def update_book_details(book_id: int, **kwargs) -> bool:
     try:
         sets = []
         values = []
-        for key in ("cover_url", "description", "isbn", "categories", "author"):
+        for key in ("cover_url", "description", "isbn", "categories", "author", "series_name", "series_index"):
             if key in kwargs:
                 sets.append(f"{key} = ?")
                 values.append(kwargs[key])
@@ -239,7 +241,7 @@ async def get_all_ratings() -> list[dict]:
 # ========== 消息操作 ==========
 
 async def add_message(role: str, content: str, tokens: int = 0) -> int:
-    """添加消息"""
+    """添加消息，超过 200 条时自动清理旧的，保留最近 100 条"""
     db = await get_db()
     try:
         cursor = await db.execute(
@@ -247,6 +249,17 @@ async def add_message(role: str, content: str, tokens: int = 0) -> int:
             (role, content, tokens, _now()),
         )
         await db.commit()
+
+        # 自动清理：超过 200 条时删除旧的，保留最近 100 条
+        count_cursor = await db.execute("SELECT COUNT(*) as cnt FROM messages")
+        row = await count_cursor.fetchone()
+        if row["cnt"] > 200:
+            # 找到第 100 条（从新到旧）的 id，删除更早的
+            await db.execute(
+                "DELETE FROM messages WHERE id < (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 99)"
+            )
+            await db.commit()
+
         return cursor.lastrowid
     finally:
         await db.close()
@@ -386,11 +399,12 @@ async def import_all(data: dict) -> dict:
         for book in data.get("books", []):
             await db.execute(
                 """INSERT INTO books (id, title, author, cover_url, description, isbn,
-                   categories, status, recommend_reason, reject_reasons, recommend_count, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   categories, series_name, series_index, status, recommend_reason, reject_reasons, recommend_count, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (book.get("id"), book.get("title", ""), book.get("author", ""),
                  book.get("cover_url", ""), book.get("description", ""), book.get("isbn", ""),
-                 book.get("categories", ""), book.get("status", "suggested"),
+                 book.get("categories", ""), book.get("series_name", ""), book.get("series_index", 0),
+                 book.get("status", "suggested"),
                  book.get("recommend_reason", ""), book.get("reject_reasons", "[]"),
                  book.get("recommend_count", 0), book.get("created_at", "")),
             )

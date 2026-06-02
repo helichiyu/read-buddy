@@ -20,8 +20,11 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "book_title": {"type": "string", "description": "书名"},
+                    "author": {"type": "string", "description": "作者"},
                     "stars": {"type": "integer", "description": "星级评分 1-5"},
                     "review": {"type": "string", "description": "用户的文字评价"},
+                    "series_name": {"type": "string", "description": "系列名称（如'三体'、'哈利·波特'），单本作品不需要填"},
+                    "series_index": {"type": "integer", "description": "在系列中的序号（1=第一部），单本作品不需要填"},
                 },
                 "required": ["book_title", "stars"],
             },
@@ -43,6 +46,8 @@ TOOLS = [
                                 "title": {"type": "string", "description": "书名"},
                                 "author": {"type": "string", "description": "作者"},
                                 "reason": {"type": "string", "description": "推荐原因（不剧透）"},
+                                "series_name": {"type": "string", "description": "系列名称，单本不填"},
+                                "series_index": {"type": "integer", "description": "系列序号，单本不填"},
                             },
                             "required": ["title", "author", "reason"],
                         },
@@ -63,6 +68,8 @@ TOOLS = [
                     "book_title": {"type": "string", "description": "书名"},
                     "author": {"type": "string", "description": "作者"},
                     "reason": {"type": "string", "description": "推荐原因"},
+                    "series_name": {"type": "string", "description": "系列名称，单本不填"},
+                    "series_index": {"type": "integer", "description": "系列序号，单本不填"},
                 },
                 "required": ["book_title", "author"],
             },
@@ -98,6 +105,21 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_preference",
+            "description": "保存用户的阅读偏好或个性化要求（如喜欢的类型、不喜欢的风格、特殊要求等），后续对话会自动读取",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "description": "偏好分类：阅读偏好 / 不喜欢的 / 其他个性化要求"},
+                    "content": {"type": "string", "description": "具体的偏好内容"},
+                },
+                "required": ["category", "content"],
+            },
+        },
+    },
 ]
 
 
@@ -110,17 +132,23 @@ async def build_system_prompt() -> str:
     user_name = profile.get("user_name", "")
     greeting = profile.get("greeting", "")
 
+    # 读取用户偏好文件
+    from preferences import get_preferences
+    user_prefs = get_preferences()
+
     # 构建已读书籍摘要
     rated_books = await db.get_books_by_status("rated")
     rated_summary = ""
     for b in rated_books:
-        rated_summary += f"- {b['title']}（{b['author']}）\n"
+        series = f"【{b['series_name']}第{b['series_index']}部】" if b.get("series_name") else ""
+        rated_summary += f"- {series}{b['title']}（{b['author']}）\n"
 
     # 构建待阅读列表
     pending_books = await db.get_books_by_status("pending")
     pending_summary = ""
     for b in pending_books:
-        pending_summary += f"- {b['title']}（{b['author']}）推荐原因：{b['recommend_reason']}\n"
+        series = f"【{b['series_name']}第{b['series_index']}部】" if b.get("series_name") else ""
+        pending_summary += f"- {series}{b['title']}（{b['author']}）推荐原因：{b['recommend_reason']}\n"
 
     # 构建拒绝列表
     not_interested = await db.get_books_by_status("not_interested")
@@ -142,6 +170,13 @@ async def build_system_prompt() -> str:
 - 在与用户聊未读的书籍时，绝不透露剧情、结局、关键转折等任何内容
 - 推荐书籍时只能说类型、风格、氛围、作者的写作特点等，不能涉及具体情节
 - 除非用户明确说"我想被剧透"或"告诉我剧情"，才能透露
+
+### 系列作品处理
+- 很多书属于系列作品（如"三体"包含《三体》《黑暗森林》《死神永生》）
+- 用户提到系列作品时，必须区分具体是哪一本，不能笼统地说"三体"，要说清楚"三体·第一部"或"三体·黑暗森林"
+- 在调用工具函数时，通过 series_name 和 series_index 标明系列归属
+- 推荐系列作品时，如果用户没看过前面的，建议从第一部开始
+- 在对话和书架展示中，系列作品要标注"系列名·第N部"
 
 ## 核心规则
 
@@ -201,13 +236,21 @@ async def build_system_prompt() -> str:
     prompt += pending_summary if pending_summary else "（暂无）"
     prompt += "\n### 拒绝列表（含原因和次数）\n"
     prompt += rejected_summary if rejected_summary else "（暂无）"
+    prompt += "\n\n### 用户偏好记录（自动维护，可通过 save_preference 工具追加）\n"
+    prompt += user_prefs
 
     prompt += """
 
 ## 注意
 - 用中文回复
 - 友好、有耐心、像一个真正的朋友在聊天
-- 调用工具函数时不要额外解释，自然地融入对话
+- **必须调用工具函数来执行操作**，不要只在文字里说"已添加/已记录"。以下操作必须调用对应工具：
+  - 用户评价了一本书 → 必须调用 rate_book
+  - 用户接受了推荐 → 必须调用 accept_book
+  - 用户拒绝了推荐 → 必须调用 reject_book
+  - 你想推荐书籍 → 必须调用 recommend_books
+  - 用户想聊某本书 → 必须调用 discuss_book
+- 不调用工具函数的话，书籍不会被真正添加到数据库和右侧书架
 """
     return prompt
 

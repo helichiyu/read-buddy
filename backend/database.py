@@ -7,8 +7,13 @@ from typing import Optional
 
 import aiosqlite
 
-# 数据库文件路径
-DB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+# 数据库文件路径（打包后在 EXE 所在目录的 data/，开发时在项目根目录的 data/）
+import sys
+if getattr(sys, "frozen", False):
+    # 打包后，数据放在 EXE 同级目录
+    DB_DIR = os.path.join(os.path.dirname(sys.executable), "data")
+else:
+    DB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 DB_PATH = os.path.join(DB_DIR, "readbuddy.db")
 
 

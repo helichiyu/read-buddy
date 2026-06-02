@@ -2,7 +2,11 @@
 
 import os
 
-PREF_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+import sys
+if getattr(sys, "frozen", False):
+    PREF_DIR = os.path.join(os.path.dirname(sys.executable), "data")
+else:
+    PREF_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 PREF_FILE = os.path.join(PREF_DIR, "preferences.md")
 
 DEFAULT_CONTENT = """# 用户阅读偏好

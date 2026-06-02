@@ -17,8 +17,13 @@ def _today() -> str:
     from datetime import datetime
     return datetime.now().strftime("%Y%m%d")
 
-# 静态文件目录
-FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+# 静态文件目录（兼容打包和开发两种模式）
+import sys
+if getattr(sys, "frozen", False):
+    # PyInstaller 打包后，frontend 在 _MEIPASS/frontend
+    FRONTEND_DIR = Path(sys._MEIPASS) / "frontend"
+else:
+    FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 
 # ========== 启动时初始化数据库 ==========

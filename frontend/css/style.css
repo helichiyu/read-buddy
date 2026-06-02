@@ -298,6 +298,13 @@ body {
   cursor: pointer;
   color: var(--text-primary);
   transition: background var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.book-actions button .btn-icon {
+  font-size: 15px;
 }
 .book-actions button:hover { background: var(--bg-primary); }
 .book-actions button:active { background: #e8e8ed; }

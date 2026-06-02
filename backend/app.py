@@ -91,6 +91,148 @@ async def get_recent_messages(limit: int = 20):
     return messages
 
 
+@app.post("/api/chat")
+async def chat(data: dict = Body(...)):
+    """
+    核心对话接口：
+    1. 接收用户消息
+    2. 构建上下文（System Prompt + 最近 20 条消息）
+    3. 调用 AI（带 Function Calling 工具）
+    4. 处理工具调用（评价/推荐/接受/拒绝/聊书）
+    5. 返回 AI 回复 + 变更数据
+    """
+    user_content = data.get("content", "")
+    if not user_content:
+        return {"error": "消息不能为空"}
+
+    # 检查 AI 配置
+    from ai_service import get_ai_service, build_system_prompt, TOOLS
+    ai = await get_ai_service()
+    if not ai:
+        return {
+            "reply": "请先在设置中配置 AI 的 API 信息（API Base URL、API Key、模型名称），然后就可以开始聊天了！点击右上角的 ⚙️ 按钮。",
+            "tokens": 0,
+            "books_changed": [],
+        }
+
+    # 存储用户消息
+    await db.add_message("user", user_content)
+
+    # 构建上下文
+    system_prompt = await build_system_prompt()
+    recent_messages = await db.get_recent_messages(limit=20)
+
+    # 构建发送给 AI 的消息列表（不含刚存入的用户消息，因为 recent_messages 已包含）
+    chat_messages = [
+        {"role": m["role"], "content": m["content"]}
+        for m in recent_messages
+    ]
+
+    # 调用 AI（可能需要多轮处理工具调用）
+    books_changed = []
+    total_tokens = 0
+    max_rounds = 5  # 最多处理 5 轮工具调用
+
+    for _ in range(max_rounds):
+        message, tokens = await ai.chat(chat_messages, system_prompt, tools=TOOLS)
+        total_tokens += tokens
+
+        # 如果没有工具调用，直接返回
+        if not message.tool_calls:
+            break
+
+        # 将 AI 回复加入上下文
+        chat_messages.append({"role": "assistant", "content": message.content or "", "tool_calls": [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+            }
+            for tc in message.tool_calls
+        ]})
+
+        # 处理每个工具调用
+        for tc in message.tool_calls:
+            import json as _json
+            args = _json.loads(tc.function.arguments)
+            result = await _handle_tool_call(tc.function.name, args, books_changed)
+            # 将工具结果回传给 AI
+            chat_messages.append({"role": "tool", "tool_call_id": tc.id, "content": _json.dumps(result, ensure_ascii=False)})
+
+    # 存储 AI 回复
+    reply_text = message.content or ""
+    await db.add_message("assistant", reply_text, total_tokens)
+    await db.add_token_usage(total_tokens)
+
+    return {
+        "reply": reply_text,
+        "tokens": total_tokens,
+        "books_changed": books_changed,
+    }
+
+
+async def _handle_tool_call(name: str, args: dict, books_changed: list) -> dict:
+    """处理单个工具调用，返回结果给 AI"""
+    if name == "rate_book":
+        title = args.get("book_title", "")
+        stars = args.get("stars", 0)
+        review = args.get("review", "")
+        # 查找或创建书籍
+        book_id = await db.add_book(title=title, status="rated")
+        await db.add_rating(book_id, stars, review)
+        books_changed.append({"action": "rated", "title": title, "stars": stars})
+        return {"ok": True, "message": f"已记录《{title}》的评价：{stars}星"}
+
+    elif name == "recommend_books":
+        books = args.get("books", [])
+        for b in books:
+            books_changed.append({
+                "action": "recommended",
+                "title": b.get("title", ""),
+                "author": b.get("author", ""),
+                "reason": b.get("reason", ""),
+            })
+        return {"ok": True, "message": f"已推荐 {len(books)} 本书，等待用户回应"}
+
+    elif name == "accept_book":
+        title = args.get("book_title", "")
+        author = args.get("author", "")
+        reason = args.get("reason", "")
+        book_id = await db.add_book(title=title, author=author, reason=reason, status="pending")
+        book = await db.get_book(book_id)
+        books_changed.append({"action": "accepted", **book})
+        return {"ok": True, "message": f"《{title}》已加入待阅读列表"}
+
+    elif name == "reject_book":
+        title = args.get("book_title", "")
+        reason = args.get("reason", "")
+        # 查找这本书
+        all_books = await db.get_all_books()
+        target = None
+        for b in all_books:
+            if b["title"] == title:
+                target = b
+                break
+        if target:
+            await db.update_book_status(target["id"], "not_interested", reason)
+            books_changed.append({"action": "rejected", "title": title})
+            return {"ok": True, "message": f"已记录《{title}》的拒绝原因：{reason}"}
+        else:
+            # 书籍不在数据库中，创建一条记录
+            book_id = await db.add_book(title=title, status="not_interested")
+            await db.update_book_status(book_id, "not_interested", reason)
+            books_changed.append({"action": "rejected", "title": title})
+            return {"ok": True, "message": f"已记录《{title}》的拒绝原因：{reason}"}
+
+    elif name == "discuss_book":
+        title = args.get("book_title", "")
+        topic = args.get("topic", "")
+        books_changed.append({"action": "discuss", "title": title, "topic": topic})
+        return {"ok": True, "message": f"开始聊《{title}》"}
+
+    return {"ok": False, "message": "未知操作"}
+
+
 # ========== 配置 API ==========
 
 @app.get("/api/settings")

@@ -5,110 +5,155 @@
 const Settings = {
   /** 绑定设置面板交互 */
   init() {
-    const overlay = document.getElementById('settings-overlay');
-    const btnOpen = document.getElementById('btn-settings');
-    const btnClose = document.getElementById('btn-settings-close');
-    const btnSave = document.getElementById('btn-settings-save');
-    const btnTest = document.getElementById('btn-test-connection');
+    const overlay = document.getElementById("settings-overlay");
+    const btnOpen = document.getElementById("btn-settings");
+    const btnClose = document.getElementById("btn-settings-close");
+    const btnSave = document.getElementById("btn-settings-save");
+    const btnTest = document.getElementById("btn-test-connection");
+    const btnExport = document.getElementById("btn-export");
+    const btnImport = document.getElementById("btn-import");
 
-    // 打开设置
-    btnOpen.addEventListener('click', () => {
-      this.loadFromStorage();
-      overlay.classList.add('active');
+    btnOpen.addEventListener("click", () => {
+      this.loadFromServer();
+      overlay.classList.add("active");
     });
 
-    // 关闭设置
-    btnClose.addEventListener('click', () => overlay.classList.remove('active'));
+    btnClose.addEventListener("click", () => overlay.classList.remove("active"));
 
-    // 点击遮罩关闭
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.classList.remove('active');
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) overlay.classList.remove("active");
     });
 
-    // ESC 关闭
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && overlay.classList.contains('active')) {
-        overlay.classList.remove('active');
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && overlay.classList.contains("active")) {
+        overlay.classList.remove("active");
       }
     });
 
-    // 保存设置
-    btnSave.addEventListener('click', () => {
-      this.saveToStorage();
-      overlay.classList.remove('active');
-    });
+    btnSave.addEventListener("click", () => this.saveToServer());
 
-    // 测试连接（模拟，后续对接后端 API）
-    btnTest.addEventListener('click', () => this.testConnection());
+    btnTest.addEventListener("click", () => this.testConnection());
+
+    // 导出
+    if (btnExport) {
+      btnExport.addEventListener("click", () => this.exportData());
+    }
+    // 导入
+    if (btnImport) {
+      btnImport.addEventListener("click", () => this.importData());
+    }
   },
 
-  /** 从 localStorage 读取配置填充表单 */
-  loadFromStorage() {
-    const fields = [
-      { id: 'setting-api-url', key: 'api_url' },
-      { id: 'setting-api-key', key: 'api_key' },
-      { id: 'setting-model', key: 'model' },
-      { id: 'setting-buddy-name', key: 'buddy_name' },
-      { id: 'setting-user-name', key: 'user_name' },
-      { id: 'setting-greeting', key: 'greeting' },
-    ];
-    fields.forEach(({ id, key }) => {
-      const el = document.getElementById(id);
-      if (el) el.value = localStorage.getItem(`readbuddy_${key}`) || '';
-    });
+  /** 从后端加载配置 */
+  async loadFromServer() {
+    try {
+      const settings = await API.getSettings();
+      document.getElementById("setting-api-url").value = settings.api_base_url || "";
+      document.getElementById("setting-api-key").value = settings.api_key || "";
+      document.getElementById("setting-model").value = settings.model_name || "";
 
-    // 恢复 Token 显示
-    const sessionToken = localStorage.getItem('readbuddy_token_session') || '0';
-    const totalToken = localStorage.getItem('readbuddy_token_total') || '0';
-    document.getElementById('token-session').textContent = sessionToken;
-    document.getElementById('token-total').textContent = totalToken;
+      const profile = await API.getProfile();
+      document.getElementById("setting-buddy-name").value = profile.buddy_name || "";
+      document.getElementById("setting-user-name").value = profile.user_name || "";
+      document.getElementById("setting-greeting").value = profile.greeting || "";
+
+      const usage = await API.getTokenUsage();
+      document.getElementById("token-total").textContent = usage.total || 0;
+      document.getElementById("token-session").textContent = "0";
+    } catch (e) {
+      console.error("加载配置失败", e);
+    }
   },
 
-  /** 保存配置到 localStorage */
-  saveToStorage() {
-    const fields = [
-      { id: 'setting-api-url', key: 'api_url' },
-      { id: 'setting-api-key', key: 'api_key' },
-      { id: 'setting-model', key: 'model' },
-      { id: 'setting-buddy-name', key: 'buddy_name' },
-      { id: 'setting-user-name', key: 'user_name' },
-      { id: 'setting-greeting', key: 'greeting' },
-    ];
-    fields.forEach(({ id, key }) => {
-      const el = document.getElementById(id);
-      if (el) localStorage.setItem(`readbuddy_${key}`, el.value);
-    });
+  /** 保存配置到后端 */
+  async saveToServer() {
+    try {
+      // 保存 AI 配置（API Key 只有 4 位脱敏时跳过）
+      const apiKey = document.getElementById("setting-api-key").value;
+      const settingsData = {
+        api_base_url: document.getElementById("setting-api-url").value,
+        model_name: document.getElementById("setting-model").value,
+      };
+      // 只有用户真正修改了 key（不是 **** 格式）才发送
+      if (apiKey && !apiKey.includes("****")) {
+        settingsData.api_key = apiKey;
+      }
+      await API.updateSettings(settingsData);
+
+      // 保存个性化偏好
+      await API.updateProfile({
+        buddy_name: document.getElementById("setting-buddy-name").value,
+        user_name: document.getElementById("setting-user-name").value,
+        greeting: document.getElementById("setting-greeting").value,
+      });
+
+      document.getElementById("settings-overlay").classList.remove("active");
+    } catch (e) {
+      console.error("保存配置失败", e);
+    }
   },
 
-  /** 测试连接（模拟，后续对接 POST /api/settings/test） */
+  /** 测试连接 */
   async testConnection() {
-    const dot = document.getElementById('connection-status');
-    const btn = document.getElementById('btn-test-connection');
-    dot.className = 'status-dot';
+    const dot = document.getElementById("connection-status");
+    const btn = document.getElementById("btn-test-connection");
+    dot.className = "status-dot";
     btn.disabled = true;
-    btn.textContent = '测试中...';
+    btn.textContent = "测试中...";
 
-    // 模拟延迟
-    await new Promise(r => setTimeout(r, 1000));
-
-    // 模拟成功（后续改为真实 API 调用）
-    const apiUrl = document.getElementById('setting-api-url').value;
-    const apiKey = document.getElementById('setting-api-key').value;
-    if (apiUrl && apiKey) {
-      dot.className = 'status-dot ok';
-    } else {
-      dot.className = 'status-dot fail';
+    try {
+      const result = await API.testConnection({
+        api_base_url: document.getElementById("setting-api-url").value,
+        api_key: document.getElementById("setting-api-key").value,
+        model_name: document.getElementById("setting-model").value,
+      });
+      dot.className = `status-dot ${result.ok ? "ok" : "fail"}`;
+    } catch (e) {
+      dot.className = "status-dot fail";
     }
 
     btn.disabled = false;
-    btn.textContent = '测试连接';
+    btn.textContent = "测试连接";
   },
 
   /** 更新 Token 显示 */
   updateTokenDisplay(sessionTokens, totalTokens) {
-    document.getElementById('token-session').textContent = sessionTokens;
-    document.getElementById('token-total').textContent = totalTokens;
-    localStorage.setItem('readbuddy_token_session', sessionTokens);
-    localStorage.setItem('readbuddy_token_total', totalTokens);
+    document.getElementById("token-session").textContent = sessionTokens;
+    document.getElementById("token-total").textContent = totalTokens;
+  },
+
+  /** 导出数据 */
+  async exportData() {
+    try {
+      const data = await API.exportData();
+      alert(`导出成功！共 ${data.books?.length || 0} 本书，${data.ratings?.length || 0} 条评价，${data.messages?.length || 0} 条消息。`);
+    } catch (e) {
+      alert("导出失败：" + e.message);
+    }
+  },
+
+  /** 导入数据 */
+  async importData() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      if (!confirm("导入将覆盖现有数据，确定吗？")) return;
+      try {
+        const result = await API.importData(file);
+        if (result.error) {
+          alert("导入失败：" + result.error);
+        } else {
+          alert(`导入成功！${result.books || 0} 本书，${result.ratings || 0} 条评价，${result.messages || 0} 条消息。`);
+          // 重新加载界面
+          await App.reload();
+        }
+      } catch (e) {
+        alert("导入失败：" + e.message);
+      }
+    };
+    input.click();
   },
 };

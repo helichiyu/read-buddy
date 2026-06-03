@@ -117,7 +117,8 @@ async def chat(data: dict = Body(...)):
         return {"error": "消息不能为空"}
 
     # 检查 AI 配置
-    from ai_service import get_ai_service, build_system_prompt, TOOLS
+    from ai_service import get_ai_service, build_system_prompt
+    from tools import get_openai_tools, get_tool
     ai = await get_ai_service()
     if not ai:
         return {
@@ -139,13 +140,16 @@ async def chat(data: dict = Body(...)):
         for m in recent_messages
     ]
 
+    # 使用注册器的工具列表
+    tools = get_openai_tools()
+
     # 调用 AI（可能需要多轮处理工具调用）
     books_changed = []
     total_tokens = 0
     max_rounds = 5  # 最多处理 5 轮工具调用
 
     for _ in range(max_rounds):
-        message, tokens = await ai.chat(chat_messages, system_prompt, tools=TOOLS)
+        message, tokens = await ai.chat(chat_messages, system_prompt, tools=tools)
         total_tokens += tokens
 
         # 如果没有工具调用，直接返回
@@ -162,11 +166,15 @@ async def chat(data: dict = Body(...)):
             for tc in message.tool_calls
         ]})
 
-        # 处理每个工具调用
+        # 使用注册器分发工具调用
+        import json as _json
         for tc in message.tool_calls:
-            import json as _json
             args = _json.loads(tc.function.arguments)
-            result = await _handle_tool_call(tc.function.name, args, books_changed)
+            tool = get_tool(tc.function.name)
+            if tool:
+                result = await tool.handle(args, {"books_changed": books_changed})
+            else:
+                result = {"ok": False, "message": f"未知工具：{tc.function.name}"}
             # 将工具结果回传给 AI
             chat_messages.append({"role": "tool", "tool_call_id": tc.id, "content": _json.dumps(result, ensure_ascii=False)})
 
@@ -180,135 +188,6 @@ async def chat(data: dict = Body(...)):
         "tokens": total_tokens,
         "books_changed": books_changed,
     }
-
-
-async def _handle_tool_call(name: str, args: dict, books_changed: list) -> dict:
-    """处理单个工具调用，返回结果给 AI"""
-    if name == "rate_book":
-        title = args.get("book_title", "")
-        stars = args.get("stars", 0)
-        review = args.get("review", "")
-        author = args.get("author", "")
-        series_name = args.get("series_name", "")
-        series_index = args.get("series_index", 0)
-        # 查找是否已有同名书籍
-        all_books = await db.get_all_books()
-        existing = None
-        for b in all_books:
-            if b["title"] == title and b.get("series_index", 0) == series_index:
-                existing = b
-                break
-        if existing:
-            # 已存在，更新状态为 rated 并添加评价
-            book_id = existing["id"]
-            await db.update_book_status(book_id, "rated")
-            if author and not existing.get("author"):
-                await db.update_book_details(book_id, author=author)
-            if series_name and not existing.get("series_name"):
-                await db.update_book_details(book_id, series_name=series_name, series_index=series_index)
-        else:
-            book_id = await db.add_book(title=title, author=author, status="rated", series_name=series_name, series_index=series_index)
-        # 尝试从豆瓣获取详情（封面、简介等）
-        try:
-            from book_service import search as search_book
-            query = f"{title} {author}".strip()
-            book_info = await search_book(query)
-            if book_info:
-                await db.update_book_details(
-                    book_id,
-                    cover_url=book_info.get("cover_url", ""),
-                    description=book_info.get("description", ""),
-                    isbn=book_info.get("isbn", ""),
-                    categories=book_info.get("categories", ""),
-                    author=book_info.get("author", "") or author,
-                )
-        except Exception:
-            pass  # API 失败不影响主流程
-        await db.add_rating(book_id, stars, review)
-        book = await db.get_book(book_id)
-        books_changed.append({"action": "rated", **book})
-        return {"ok": True, "message": f"已记录《{title}》的评价：{stars}星"} await db.add_book(title=title, author=author, status="rated", series_name=series_name, series_index=series_index)
-        await db.add_rating(book_id, stars, review)
-        books_changed.append({"action": "rated", "title": title, "stars": stars})
-        return {"ok": True, "message": f"已记录《{title}》的评价：{stars}星"}
-
-    elif name == "recommend_books":
-        books = args.get("books", [])
-        for b in books:
-            books_changed.append({
-                "action": "recommended",
-                "title": b.get("title", ""),
-                "author": b.get("author", ""),
-                "reason": b.get("reason", ""),
-                "series_name": b.get("series_name", ""),
-                "series_index": b.get("series_index", 0),
-            })
-        return {"ok": True, "message": f"已推荐 {len(books)} 本书，等待用户回应"}
-
-    elif name == "accept_book":
-        title = args.get("book_title", "")
-        author = args.get("author", "")
-        reason = args.get("reason", "")
-        series_name = args.get("series_name", "")
-        series_index = args.get("series_index", 0)
-        book_id = await db.add_book(title=title, author=author, reason=reason, status="pending", series_name=series_name, series_index=series_index)
-        # 尝试从 Google Books 获取详情（封面、简介等）
-        try:
-            from book_service import search as search_book
-            query = f"{title} {author}".strip()
-            book_info = await search_book(query)
-            if book_info:
-                await db.update_book_details(
-                    book_id,
-                    cover_url=book_info.get("cover_url", ""),
-                    description=book_info.get("description", ""),
-                    isbn=book_info.get("isbn", ""),
-                    categories=book_info.get("categories", ""),
-                    author=book_info.get("author", "") or author,
-                )
-        except Exception:
-            pass  # API 失败不影响主流程
-        book = await db.get_book(book_id)
-        books_changed.append({"action": "accepted", **book})
-        return {"ok": True, "message": f"《{title}》已加入待阅读列表"}
-
-    elif name == "reject_book":
-        title = args.get("book_title", "")
-        reason = args.get("reason", "")
-        # 查找这本书
-        all_books = await db.get_all_books()
-        target = None
-        for b in all_books:
-            if b["title"] == title:
-                target = b
-                break
-        if target:
-            await db.update_book_status(target["id"], "not_interested", reason)
-            books_changed.append({"action": "rejected", "title": title})
-            return {"ok": True, "message": f"已记录《{title}》的拒绝原因：{reason}"}
-        else:
-            # 书籍不在数据库中，创建一条记录
-            book_id = await db.add_book(title=title, status="not_interested")
-            await db.update_book_status(book_id, "not_interested", reason)
-            books_changed.append({"action": "rejected", "title": title})
-            return {"ok": True, "message": f"已记录《{title}》的拒绝原因：{reason}"}
-
-    elif name == "discuss_book":
-        title = args.get("book_title", "")
-        topic = args.get("topic", "")
-        books_changed.append({"action": "discuss", "title": title, "topic": topic})
-        return {"ok": True, "message": f"开始聊《{title}》"}
-
-    elif name == "save_preference":
-        category = args.get("category", "其他个性化要求")
-        content = args.get("content", "")
-        if content:
-            from preferences import append_preference
-            append_preference(category, content)
-            return {"ok": True, "message": f"已保存偏好：{content}"}
-        return {"ok": False, "message": "偏好内容为空"}
-
-    return {"ok": False, "message": "未知操作"}
 
 
 # ========== 配置 API ==========

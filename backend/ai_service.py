@@ -1,4 +1,4 @@
-"""AI 服务封装 - 统一 OpenAI 兼容接口，支持 Function Calling"""
+"""AI 服务封装 - 统一 OpenAI 兼容接口"""
 
 import json
 from typing import Optional
@@ -6,121 +6,6 @@ from typing import Optional
 from openai import AsyncOpenAI
 
 import database as db
-
-
-# ========== 工具函数定义（Function Calling）==========
-
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "rate_book",
-            "description": "用户对一本书做出了评价",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "book_title": {"type": "string", "description": "书名"},
-                    "author": {"type": "string", "description": "作者"},
-                    "stars": {"type": "integer", "description": "星级评分 1-5"},
-                    "review": {"type": "string", "description": "用户的文字评价"},
-                    "series_name": {"type": "string", "description": "系列名称（如'三体'、'哈利·波特'），单本作品不需要填"},
-                    "series_index": {"type": "integer", "description": "在系列中的序号（1=第一部），单本作品不需要填"},
-                },
-                "required": ["book_title", "stars"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "recommend_books",
-            "description": "向用户推荐书籍（推荐先在聊天区展示，用户接受后才入库）",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "books": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "title": {"type": "string", "description": "书名"},
-                                "author": {"type": "string", "description": "作者"},
-                                "reason": {"type": "string", "description": "推荐原因（不剧透）"},
-                                "series_name": {"type": "string", "description": "系列名称，单本不填"},
-                                "series_index": {"type": "integer", "description": "系列序号，单本不填"},
-                            },
-                            "required": ["title", "author", "reason"],
-                        },
-                    },
-                },
-                "required": ["books"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "accept_book",
-            "description": "用户接受了推荐，愿意把这本书加入待阅读列表",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "book_title": {"type": "string", "description": "书名"},
-                    "author": {"type": "string", "description": "作者"},
-                    "reason": {"type": "string", "description": "推荐原因"},
-                    "series_name": {"type": "string", "description": "系列名称，单本不填"},
-                    "series_index": {"type": "integer", "description": "系列序号，单本不填"},
-                },
-                "required": ["book_title", "author"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "reject_book",
-            "description": "用户表示不想看某本推荐的书",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "book_title": {"type": "string", "description": "书名"},
-                    "reason": {"type": "string", "description": "不想看的原因"},
-                },
-                "required": ["book_title", "reason"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "discuss_book",
-            "description": "用户想聊某本书（点击了书架卡片或主动提出），进入聊书模式",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "book_title": {"type": "string", "description": "书名"},
-                    "topic": {"type": "string", "description": "聊天话题：background（背景/作者）、reviews（网上评价）、related（相关推荐）"},
-                },
-                "required": ["book_title"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "save_preference",
-            "description": "保存用户的阅读偏好或个性化要求（如喜欢的类型、不喜欢的风格、特殊要求等），后续对话会自动读取",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "category": {"type": "string", "description": "偏好分类：阅读偏好 / 不喜欢的 / 其他个性化要求"},
-                    "content": {"type": "string", "description": "具体的偏好内容"},
-                },
-                "required": ["category", "content"],
-            },
-        },
-    },
-]
 
 
 # ========== System Prompt 构建 ==========
@@ -161,6 +46,26 @@ async def build_system_prompt() -> str:
     prompt = f"""你是 {buddy_name}，一个友好热情的阅读伙伴。"""
     if user_name:
         prompt += f"\n称呼用户为「{user_name}」。"
+
+    prompt += """
+
+## ⚠️ 工具调用自检（每次回复必须遵守）
+
+每次生成回复后，你必须自问：我的回复是否涉及以下操作？
+
+| 如果你说/做了... | 必须调用的工具 |
+|---|---|
+| 确认了用户的评价、打分 | `rate_book` |
+| 推荐了具体书籍 | `recommend_books` |
+| 确认用户接受了推荐 | `accept_book` |
+| 记录用户不想看某本书 | `reject_book` |
+| 开始聊某本书的背景/作者 | `discuss_book` |
+| 确认记住用户的偏好要求 | `save_preference` |
+
+- 如果涉及任何操作 → **必须调用对应工具**，不能只在文字里说"已记录"
+- 如果只是纯聊天（问候、追问、讨论）→ 不调用工具，完全正常
+- 可以同时调用多个工具（比如推荐书的同时保存偏好）
+"""
 
     prompt += f"""
 
@@ -254,14 +159,6 @@ async def build_system_prompt() -> str:
 ## 注意
 - 用中文回复
 - 友好、有耐心、像一个真正的朋友在聊天
-- **必须调用工具函数来执行操作**，不要只在文字里说"已添加/已记录"。以下操作必须调用对应工具：
-  - 用户评价了一本书 → 必须调用 rate_book
-  - 用户接受了推荐 → 必须调用 accept_book
-  - 用户拒绝了推荐 → 必须调用 reject_book
-  - 你想推荐书籍 → 必须调用 recommend_books
-  - 用户想聊某本书 → 必须调用 discuss_book
-- 不调用工具函数的话，书籍不会被真正添加到数据库和右侧书架
-- **用户在对话中提出个人偏好时（如"不要用表情包"、"回复简洁点"、"我喜欢XX类型"），必须调用 save_preference 保存**，这样下次对话会自动读取这些偏好。不要只是在回复里说"好的"，一定要调用工具保存
 """
     return prompt
 

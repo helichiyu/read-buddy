@@ -10,14 +10,47 @@ import os
 # 项目根目录
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
-PyInstaller.__main__.run([
+# 动态导入的模块，PyInstaller 无法自动发现，必须手动列出
+HIDDEN_IMPORTS = [
+    # 后端模块
+    "database",
+    "ai_service",
+    "app",
+    "book_service",
+    "models",
+    "preferences",
+    # 工具模块（使用 importlib 动态加载）
+    "tools",
+    "tools.base",
+    "tools.rate_book",
+    "tools.recommend_books",
+    "tools.accept_book",
+    "tools.reject_book",
+    "tools.discuss_book",
+    "tools.save_preference",
+]
+
+args = [
     os.path.join(ROOT, "backend", "main.py"),
     "--name=ReadBuddy",
     "--noconfirm",
     "--noconsole",
     "--clean",
     f"--add-data={os.path.join(ROOT, 'frontend')}{os.pathsep}frontend",
-    f"--icon={os.path.join(ROOT, 'installer', 'icon.ico')}" if os.path.exists(os.path.join(ROOT, 'installer', 'icon.ico')) else "",
-    # 包含 data 目录（空目录需要特殊处理）
-    f"--add-data={os.path.join(ROOT, 'data')}{os.pathsep}data" if os.path.exists(os.path.join(ROOT, 'data')) else "",
-])
+]
+
+# 图标（如果存在）
+icon_path = os.path.join(ROOT, "installer", "icon.ico")
+if os.path.exists(icon_path):
+    args.append(f"--icon={icon_path}")
+
+# data 目录（如果存在）
+data_dir = os.path.join(ROOT, "data")
+if os.path.exists(data_dir):
+    args.append(f"--add-data={data_dir}{os.pathsep}data")
+
+# hidden-imports
+for mod in HIDDEN_IMPORTS:
+    args.append(f"--hidden-import={mod}")
+
+PyInstaller.__main__.run(args)

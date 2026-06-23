@@ -141,7 +141,8 @@ read-buddy/
 │   └── preferences.md        #   用户偏好文件
 ├── build.py                  # 打包脚本
 ├── pyproject.toml            # 项目依赖
-└── CLAUDE.md                 # AI 编码准则
+├── CLAUDE.md                 # AI 编码准则
+└── ARCHITECTURE.md           # 架构设计文档
 ```
 
 ---

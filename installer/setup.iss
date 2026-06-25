@@ -3,7 +3,7 @@
 
 [Setup]
 AppName=Read Buddy
-AppVersion=0.1.0
+AppVersion=0.1.1
 AppPublisher=Read Buddy
 AppPublisherURL=https://github.com/example/read-buddy
 DefaultDirName={commonpf}\Read Buddy

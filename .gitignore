@@ -38,6 +38,9 @@ desktop.ini
 build/
 dist/
 
+# Inno Setup 安装程序产物
+installer_output/
+
 # 日志
 *.log
 

@@ -1,6 +1,6 @@
 [project]
 name = "read-buddy"
-version = "0.1.0"
+version = "0.1.1"
 description = "AI 驱动的书籍阅读记录与推荐工具"
 requires-python = ">=3.14"
 dependencies = [

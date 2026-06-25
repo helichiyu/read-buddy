@@ -59,29 +59,6 @@ const API = {
     return this.request("GET", "/api/token-usage");
   },
 
-  /** 导出数据 */
-  async exportData() {
-    const res = await fetch("/api/export");
-    const data = await res.json();
-    // 触发下载
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `readbuddy_backup_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    return data;
-  },
-
-  /** 导入数据 */
-  async importData(file) {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await fetch("/api/import", { method: "POST", body: formData });
-    return res.json();
-  },
-
   /** 清空数据 */
   async clearData() {
     return this.request("DELETE", "/api/data");

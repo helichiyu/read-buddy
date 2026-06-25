@@ -1,7 +1,11 @@
 """接受推荐工具"""
 
+import logging
+
 import database as db
 from .base import BaseTool
+
+logger = logging.getLogger(__name__)
 
 
 class AcceptBookTool(BaseTool):
@@ -53,8 +57,8 @@ class AcceptBookTool(BaseTool):
                     categories=book_info.get("categories", ""),
                     author=book_info.get("author", "") or author,
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("《%s》详情获取失败: %s", title, e)
 
         book = await db.get_book(book_id)
         context["books_changed"].append({"action": "accepted", **book})

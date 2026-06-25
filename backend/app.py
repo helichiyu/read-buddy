@@ -1,9 +1,8 @@
 """FastAPI 应用 - 路由定义"""
 
 import os
-from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Body
+from fastapi import FastAPI, Body
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -17,13 +16,10 @@ def _today() -> str:
     from datetime import datetime
     return datetime.now().strftime("%Y%m%d")
 
+from paths import resource_dir
+
 # 静态文件目录（兼容打包和开发两种模式）
-import sys
-if getattr(sys, "frozen", False):
-    # PyInstaller 打包后，frontend 在 _MEIPASS/frontend
-    FRONTEND_DIR = Path(sys._MEIPASS) / "frontend"
-else:
-    FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+FRONTEND_DIR = resource_dir() / "frontend"
 
 
 # ========== 启动时初始化数据库 ==========
@@ -31,6 +27,11 @@ else:
 @app.on_event("startup")
 async def startup():
     await db.init_db()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    await db.close_db()
 
 
 # ========== 书籍 API ==========
@@ -104,90 +105,12 @@ async def get_recent_messages(limit: int = 20):
 
 @app.post("/api/chat")
 async def chat(data: dict = Body(...)):
-    """
-    核心对话接口：
-    1. 接收用户消息
-    2. 构建上下文（System Prompt + 最近 20 条消息）
-    3. 调用 AI（带 Function Calling 工具）
-    4. 处理工具调用（评价/推荐/接受/拒绝/聊书）
-    5. 返回 AI 回复 + 变更数据
-    """
+    """核心对话接口：委托 chat_orchestrator 完成工具调用循环"""
+    from chat_orchestrator import run_chat
     user_content = data.get("content", "")
     if not user_content:
         return {"error": "消息不能为空"}
-
-    # 检查 AI 配置
-    from ai_service import get_ai_service, build_system_prompt
-    from tools import get_openai_tools, get_tool
-    ai = await get_ai_service()
-    if not ai:
-        return {
-            "reply": "请先在设置中配置 AI 的 API 信息（API Base URL、API Key、模型名称），然后就可以开始聊天了！点击右上角的 ⚙️ 按钮。",
-            "tokens": 0,
-            "books_changed": [],
-        }
-
-    # 存储用户消息
-    await db.add_message("user", user_content)
-
-    # 构建上下文
-    system_prompt = await build_system_prompt()
-    recent_messages = await db.get_recent_messages(limit=20)
-
-    # 构建发送给 AI 的消息列表（不含刚存入的用户消息，因为 recent_messages 已包含）
-    chat_messages = [
-        {"role": m["role"], "content": m["content"]}
-        for m in recent_messages
-    ]
-
-    # 使用注册器的工具列表
-    tools = get_openai_tools()
-
-    # 调用 AI（可能需要多轮处理工具调用）
-    books_changed = []
-    total_tokens = 0
-    max_rounds = 5  # 最多处理 5 轮工具调用
-
-    for _ in range(max_rounds):
-        message, tokens = await ai.chat(chat_messages, system_prompt, tools=tools)
-        total_tokens += tokens
-
-        # 如果没有工具调用，直接返回
-        if not message.tool_calls:
-            break
-
-        # 将 AI 回复加入上下文
-        chat_messages.append({"role": "assistant", "content": message.content or "", "tool_calls": [
-            {
-                "id": tc.id,
-                "type": "function",
-                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-            }
-            for tc in message.tool_calls
-        ]})
-
-        # 使用注册器分发工具调用
-        import json as _json
-        for tc in message.tool_calls:
-            args = _json.loads(tc.function.arguments)
-            tool = get_tool(tc.function.name)
-            if tool:
-                result = await tool.handle(args, {"books_changed": books_changed})
-            else:
-                result = {"ok": False, "message": f"未知工具：{tc.function.name}"}
-            # 将工具结果回传给 AI
-            chat_messages.append({"role": "tool", "tool_call_id": tc.id, "content": _json.dumps(result, ensure_ascii=False)})
-
-    # 存储 AI 回复
-    reply_text = message.content or ""
-    await db.add_message("assistant", reply_text, total_tokens)
-    await db.add_token_usage(total_tokens)
-
-    return {
-        "reply": reply_text,
-        "tokens": total_tokens,
-        "books_changed": books_changed,
-    }
+    return await run_chat(user_content)
 
 
 # ========== 配置 API ==========
@@ -257,13 +180,6 @@ async def get_token_usage():
 
 
 # ========== 存档 API ==========
-
-@app.get("/api/export")
-async def export_data():
-    """导出全部数据为 JSON（返回数据，前端下载用）"""
-    data = await db.export_all()
-    return data
-
 
 @app.post("/api/export-to-file")
 async def export_to_file():
@@ -337,21 +253,6 @@ async def import_from_file():
     result = await db.import_all(data)
     result["ok"] = True
     result["path"] = filepath
-    return result
-
-
-@app.post("/api/import")
-async def import_data(file: UploadFile = File(...)):
-    """从 JSON 文件导入数据"""
-    import json
-    content = await file.read()
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError:
-        return {"error": "无效的 JSON 文件"}
-    if "version" not in data:
-        return {"error": "无效的备份文件格式"}
-    result = await db.import_all(data)
     return result
 
 

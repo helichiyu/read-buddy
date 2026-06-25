@@ -20,4 +20,10 @@ link-mode = "copy"
 [dependency-groups]
 dev = [
     "pyinstaller>=6.20.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

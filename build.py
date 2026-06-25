@@ -16,8 +16,9 @@ HIDDEN_IMPORTS = [
     "database",
     "ai_service",
     "app",
+    "chat_orchestrator",
     "book_service",
-    "models",
+    "paths",
     "preferences",
     # 工具模块（使用 importlib 动态加载）
     "tools",

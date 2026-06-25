@@ -1,8 +1,11 @@
 """书籍信息查询服务 - 优先豆瓣，备用 Google Books"""
 
+import logging
 import re
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 DOUBAN_SUGGEST = "https://book.douban.com/j/subject_suggest"
@@ -13,18 +16,30 @@ HEADERS = {
 }
 
 
+# 进程内缓存：同一书名不重复请求外部 API（重启失效）
+_search_cache: dict[str, dict] = {}
+
+
 async def search(query: str) -> dict | None:
     """
     根据书名搜索书籍，返回最匹配的结果。
     优先豆瓣（中文书覆盖好），豆瓣失败时回退 Google Books。
     返回格式：{"title", "author", "description", "cover_url", "isbn", "categories"}
     """
+    normalized_query = " ".join(query.split())
+    cache_key = normalized_query.casefold()
     # 豆瓣建议接口不支持复合查询（带空格会返回空），只用第一个词（书名）
-    simple_query = query.split()[0] if " " in query else query
+    simple_query = normalized_query.split()[0] if " " in normalized_query else normalized_query
+    # 命中缓存直接返回
+    if cache_key in _search_cache:
+        return _search_cache[cache_key]
     result = await _search_douban(simple_query)
+    if not result:
+        result = await _search_google(normalized_query)
+    # 只缓存命中结果，失败不缓存（避免临时失败被长期记住）
     if result:
-        return result
-    return await _search_google(query)
+        _search_cache[cache_key] = result
+    return result
 
 
 async def _search_douban(query: str) -> dict | None:
@@ -78,8 +93,8 @@ async def _search_douban(query: str) -> dict | None:
                         )
                         if m2:
                             cover_url = m2.group(1)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("豆瓣详情页解析失败（id=%s）: %s", douban_id, e)
 
             return {
                 "title": title,
@@ -89,7 +104,8 @@ async def _search_douban(query: str) -> dict | None:
                 "isbn": "",
                 "categories": "",
             }
-    except Exception:
+    except Exception as e:
+        logger.warning("豆瓣搜索失败（query=%s）: %s", query, e)
         return None
 
 
@@ -138,5 +154,6 @@ async def _search_google(query: str) -> dict | None:
                 "isbn": isbn,
                 "categories": categories,
             }
-    except Exception:
+    except Exception as e:
+        logger.warning("Google Books 搜索失败（query=%s）: %s", query, e)
         return None

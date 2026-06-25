@@ -1,7 +1,11 @@
 """评价书籍工具"""
 
+import logging
+
 import database as db
 from .base import BaseTool
+
+logger = logging.getLogger(__name__)
 
 
 class RateBookTool(BaseTool):
@@ -74,8 +78,8 @@ class RateBookTool(BaseTool):
                     categories=book_info.get("categories", ""),
                     author=book_info.get("author", "") or author,
                 )
-        except Exception:
-            pass  # API 失败不影响主流程
+        except Exception as e:
+            logger.warning("《%s》详情获取失败: %s", title, e)
 
         await db.add_rating(book_id, stars, review)
         book = await db.get_book(book_id)

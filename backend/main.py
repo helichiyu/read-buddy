@@ -2,7 +2,11 @@
 
 import sys
 import os
+import logging
 import threading
+
+# 日志配置（桌面应用输出到控制台即可）
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 # PyInstaller 打包后需要把项目根目录加入搜索路径
 if getattr(sys, "frozen", False):

@@ -18,7 +18,12 @@ def resource_dir() -> Path:
 
 
 def data_dir() -> Path:
-    """可写数据目录（打包后为 EXE 同级 data/，开发态为项目根 data/）"""
+    """可写数据目录（打包后为 %APPDATA%/ReadBuddy，开发态为项目根 data/）"""
     if is_frozen():
-        return Path(os.path.dirname(sys.executable)) / "data"
+        # 安装目录（如 Program Files）普通用户无写权限，
+        # 数据放系统标准可写位置 %APPDATA%/ReadBuddy
+        appdata = os.getenv("APPDATA")
+        if appdata:
+            return Path(appdata) / "ReadBuddy"
+        return Path.home() / ".readbuddy"  # APPDATA 缺失的极少见兜底
     return resource_dir() / "data"

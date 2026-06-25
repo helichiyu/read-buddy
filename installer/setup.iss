@@ -37,7 +37,7 @@ Name: "{autodesktop}\Read Buddy"; Filename: "{app}\ReadBuddy.exe"; Tasks: deskto
 Filename: "{app}\ReadBuddy.exe"; Description: "立即运行 Read Buddy"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-Type: filesandordirs; Name: "{app}\data"
+Type: filesandordirs; Name: "{autoappdata}\ReadBuddy"
 
 [Code]
 function IsNewInstall: Boolean;

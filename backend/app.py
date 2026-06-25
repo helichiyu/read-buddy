@@ -1,9 +1,11 @@
 """FastAPI 应用 - 路由定义"""
 
 import os
+import httpx
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Body
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import database as db
@@ -261,6 +263,39 @@ async def clear_data():
     """清空所有数据"""
     await db.clear_all()
     return {"ok": True}
+
+
+# ========== 封面代理（绕豆瓣防盗链）==========
+
+# 允许代理的图床域名白名单（防止接口被当作开放代理滥用）
+_COVER_HOST_WHITELIST = (
+    "doubanio.com",
+    "googleusercontent.com",
+    "books.google.com",
+)
+
+
+@app.get("/api/book-cover")
+async def book_cover(url: str):
+    """代理书籍封面图片，绕过豆瓣图床的 Referer 防盗链"""
+    host = urlparse(url).hostname or ""
+    if not host or not any(host == d or host.endswith("." + d) for d in _COVER_HOST_WHITELIST):
+        return JSONResponse(status_code=404, content={"error": "不允许的图片域名"})
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=10,
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://book.douban.com/"},
+        ) as client:
+            resp = await client.get(url, follow_redirects=True)
+            if resp.status_code != 200:
+                return JSONResponse(status_code=404, content={"error": "图片获取失败"})
+            return Response(
+                content=resp.content,
+                media_type=resp.headers.get("content-type", "image/jpeg"),
+            )
+    except Exception as e:
+        return JSONResponse(status_code=404, content={"error": f"图片获取异常: {e}"})
 
 
 # ========== 静态文件（前端）==========

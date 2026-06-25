@@ -1,6 +1,6 @@
 # 架构设计：Read Buddy
 
-> 本文档基于 v0.1.1 实际代码梳理（2026-06-23）。如代码与本文描述不符，以代码为准并更新本文档。
+> 本文档基于 v0.1.2 实际代码梳理（2026-06-25）。如代码与本文描述不符，以代码为准并更新本文档。
 
 ## 1. 项目概述
 
@@ -42,13 +42,13 @@
 
 | 模块 | 职责 | 关键内容 |
 |---|---|---|
-| `app.py` | **路由层** | 全部 HTTP 路由；`/api/chat` 委托 `chat_orchestrator`；导出/导入用 tkinter 弹原生对话框；startup 初始化、shutdown 关闭单连接 |
+| `app.py` | **路由层** | 全部 HTTP 路由；`/api/chat` 委托 `chat_orchestrator`；导出/导入用 tkinter 弹原生对话框；`/api/book-cover` 代理封面绕豆瓣防盗链；startup 初始化、shutdown 关闭单连接 |
 | `chat_orchestrator.py` | **对话编排** | `run_chat()`：构建上下文 + 工具调用循环（最多 5 轮）+ 存回复/累计 token |
 | `ai_service.py` | **AI 服务层** | `build_system_prompt()` 动态拼接上下文；`AIService` 封装 AsyncOpenAI；`get_ai_service()` 从配置构造实例 |
 | `database.py` | **数据访问层** | async 函数式 API，覆盖 books/ratings/messages/settings/profile 的增删改查与导入导出；**应用级单连接**（`get_db()` 单例，`close_db()` 关闭） |
 | `book_service.py` | **外部书籍查询** | `search()`：豆瓣优先、Google Books 兜底，返回封面/简介/ISBN/分类；**进程内缓存**（同书名不重复请求） |
 | `preferences.py` | **偏好记忆** | 以 Markdown 文件存储用户偏好，提供读/追加 |
-| `paths.py` | **路径工具** | 统一开发/打包路径：`resource_dir()`（只读资源）、`data_dir()`（可写数据） |
+| `paths.py` | **路径工具** | 统一开发/打包路径：`resource_dir()`（只读资源）、`data_dir()`（可写数据，打包态为 `%APPDATA%/ReadBuddy`，避开 Program Files 写权限限制） |
 | `tools/` | **AI 工具层（Skill 化）** | 自动发现的 `BaseTool` 子类，见下表 |
 
 ### 工具模块（`backend/tools/`）
@@ -180,7 +180,7 @@ read-buddy/
 │   └── js/{app,api,chat,books,settings}.js
 ├── tests/                 # 单元测试（pytest）
 ├── installer/setup.iss    # Inno Setup 安装程序配置
-├── data/                  # 运行时数据（已 .gitignore）
+├── data/                  # 开发态运行时数据（已 .gitignore；打包态改存 %APPDATA%/ReadBuddy/）
 │   ├── readbuddy.db
 │   └── preferences.md
 ├── build.py               # PyInstaller 打包脚本
@@ -200,7 +200,7 @@ read-buddy/
 | 书籍详情懒加载 | 推荐即时、外部 API 调用最少 | 推荐阶段卡片无封面，需接受后才补全 |
 | System Prompt 动态注入全量书籍列表 | 让 AI 每轮都掌握完整状态，推荐更准、不重复 | 随数据增长 prompt 膨胀（见可优化点） |
 | 本地优先（SQLite + Markdown + 导出脱敏） | 隐私、离线可用、可迁移 | 无多端同步 |
-| 打包双路径模式（`sys.frozen` 区分） | 兼容开发态与 PyInstaller 冻结态，数据写可写目录、资源读只读 `_MEIPASS` | 已由 `paths.py` 统一（`main.py` 因引导阶段保留内联） |
+| 打包双路径模式（`sys.frozen` 区分） | 兼容开发态与 PyInstaller 冻结态，数据写 `%APPDATA%/ReadBuddy`（用户可写）、资源读只读 `_MEIPASS` | 已由 `paths.py` 统一（`main.py` 因引导阶段保留内联） |
 
 ## 8. 可优化点
 
@@ -213,7 +213,7 @@ read-buddy/
 5. ⏸ **部分状态约束靠 Prompt 软约束**（同一本最多推荐 3 次、不重复推荐已读）→ **暂不加代码兜底（待评估）**。继续信任 prompt；待观察到实际推荐重复率偏高后再在 `recommend_books` 加代码校验。
 6. ✅ **导出/导入存在冗余实现** → **已清理**。删除后端未调用的 `/api/export`、`/api/import` 路由及 `api.js` 中无人调用的 `exportData`/`importData`，统一为 `-to-file`/`-from-file` 版本。
 7. ✅ **`book_service` 无缓存** → **已加进程内内存缓存**。`search()` 按完整归一化 query 缓存命中结果（失败不缓存），同书名不重复请求外部 API，且避免英文书名同首词串缓存；重启失效。正则抓豆瓣详情页的脆弱性问题仍在（未改）。
-8. ❌ **推荐阶段无封面/详情** → **经核实不成立，已取消**。核实前端 `chat.js` 发现：推荐（`recommended`）阶段**不渲染卡片**（注释明确「recommended 不操作书架」），推荐书只通过 AI 文字展示，仅 `accept_book` 后才以卡片入书架（此时已同步回填封面）。因此「推荐卡片无封面」前提不成立，预取封面无目标。
+8. ✅ **封面防盗链** → **已通过后端代理解决（v0.1.2）**。原观察「推荐阶段无封面」经核实前提不成立（推荐不渲染卡片）；但实测发现真问题：豆瓣图床要求 `Referer: https://book.douban.com/`，前端 `<img>` 直连被拒（418），所有封面显示不出。新增 `GET /api/book-cover` 后端代理（带 Referer + 域名白名单防滥用），前端 img 改走代理。当年 T4.2 设想的 `book_cover` 模块以「绕防盗链」这一真正用途落地。
 9. ✅ **多处 `except Exception: pass` 静默吞错** → **已改为日志**。`book_service`/`accept_book`/`rate_book` 的静默 except 改为 `logger.warning`，`main.py` 配置 `basicConfig`。注：`app.py`/`ai_service.py` 中 `except Exception as e: return {...}` 已正确返回错误，非静默吞错，未改。
 10. ✅ **缺少自动化测试** → **已补**。引入 `pytest` + `pytest-asyncio`，覆盖工具注册器分发、书籍状态机、导入导出往返、导入失败回滚、消息清理、书籍搜索缓存（`tests/`，单连接下用临时库隔离）。
 11. ✅ **`sys.frozen` 路径判断散落 4 处** → **已抽 `paths.py`**。`resource_dir()`（只读资源）/`data_dir()`（可写数据）统一 `app.py`/`database.py`/`preferences.py` 三处；`main.py` 因处于 sys.path 引导阶段，保留内联判断（无法 import 工具，鸡生蛋）。
@@ -224,3 +224,4 @@ read-buddy/
 - 跨平台支持（macOS/Linux）：pywebview + tkinter 对话框需替换为各平台原生方案。
 - 推荐质量评估：是否引入显式的「推荐命中率」统计，反哺推荐策略。
 - 长上下文治理：随对话与书籍增长，消息已做「>200 条保留最近 100 条」的清理，书籍列表注入策略待随数据规模细化。
+- 版本升级与数据迁移：v0.1.2 起数据目录改为 `%APPDATA%/ReadBuddy`，与安装目录解耦，老版本数据不自动迁移（用户可手动导出/导入）。未来若遇数据结构或存储位置变更，应在升级流程中提供自动迁移机制，并在每次发版的更新日志中说明对老版本的影响与升级方式。

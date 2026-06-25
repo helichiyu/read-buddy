@@ -85,7 +85,9 @@ const Books = {
 
     card.innerHTML = `
       <div class="book-cover">${
-        book.cover_url ? `<img src="${book.cover_url}" alt="${book.title}">` : (book.title || "?").charAt(0)
+        book.cover_url
+          ? `<img src="/api/book-cover?url=${encodeURIComponent(book.cover_url)}" alt="${book.title}" onerror="this.outerHTML='${(book.title || "?").charAt(0)}'">`
+          : (book.title || "?").charAt(0)
       }</div>
       <div class="book-info">
         <div class="book-title">${book.series_name ? `${book.series_name}·第${book.series_index}部 ${book.title}` : book.title}</div>

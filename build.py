@@ -6,9 +6,20 @@
 
 import PyInstaller.__main__
 import os
+import shutil
 
 # 项目根目录
 ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# 打包前强制清理 PyInstaller 缓存目录。
+# --clean 参数不可靠：build/ 里可能残留上次打包的旧编译产物（PYZ），
+# 导致改了源码但打出来的 EXE 仍是旧逻辑（v0.1.2 发布时踩过此坑）。
+# 彻底删除 build/ 和 __pycache__/，强制从最新源码全新编译。
+for _dir in ("build", "backend/__pycache__"):
+    _path = os.path.join(ROOT, _dir)
+    if os.path.exists(_path):
+        shutil.rmtree(_path)
+        print(f"已清理 {_dir}/")
 
 # 动态导入的模块，PyInstaller 无法自动发现，必须手动列出
 HIDDEN_IMPORTS = [

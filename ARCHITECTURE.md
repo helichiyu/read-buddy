@@ -212,10 +212,10 @@ read-buddy/
 4. ⏸ **System Prompt 随数据膨胀** → **暂不处理（待评估）**。当前个人使用数据量小，书籍列表全量注入尚不构成压力；待书籍上百后再评估截断/摘要/检索式注入。
 5. ⏸ **部分状态约束靠 Prompt 软约束**（同一本最多推荐 3 次、不重复推荐已读）→ **暂不加代码兜底（待评估）**。继续信任 prompt；待观察到实际推荐重复率偏高后再在 `recommend_books` 加代码校验。
 6. ✅ **导出/导入存在冗余实现** → **已清理**。删除后端未调用的 `/api/export`、`/api/import` 路由及 `api.js` 中无人调用的 `exportData`/`importData`，统一为 `-to-file`/`-from-file` 版本。
-7. ✅ **`book_service` 无缓存** → **已加进程内内存缓存**。`search()` 按 `simple_query` 缓存命中结果（失败不缓存），同书名不重复请求外部 API；重启失效。正则抓豆瓣详情页的脆弱性问题仍在（未改）。
+7. ✅ **`book_service` 无缓存** → **已加进程内内存缓存**。`search()` 按完整归一化 query 缓存命中结果（失败不缓存），同书名不重复请求外部 API，且避免英文书名同首词串缓存；重启失效。正则抓豆瓣详情页的脆弱性问题仍在（未改）。
 8. ❌ **推荐阶段无封面/详情** → **经核实不成立，已取消**。核实前端 `chat.js` 发现：推荐（`recommended`）阶段**不渲染卡片**（注释明确「recommended 不操作书架」），推荐书只通过 AI 文字展示，仅 `accept_book` 后才以卡片入书架（此时已同步回填封面）。因此「推荐卡片无封面」前提不成立，预取封面无目标。
 9. ✅ **多处 `except Exception: pass` 静默吞错** → **已改为日志**。`book_service`/`accept_book`/`rate_book` 的静默 except 改为 `logger.warning`，`main.py` 配置 `basicConfig`。注：`app.py`/`ai_service.py` 中 `except Exception as e: return {...}` 已正确返回错误，非静默吞错，未改。
-10. ✅ **缺少自动化测试** → **已补**。引入 `pytest` + `pytest-asyncio`，覆盖工具注册器分发、书籍状态机、导入导出往返、消息清理（`tests/`，单连接下用临时库隔离）。
+10. ✅ **缺少自动化测试** → **已补**。引入 `pytest` + `pytest-asyncio`，覆盖工具注册器分发、书籍状态机、导入导出往返、导入失败回滚、消息清理、书籍搜索缓存（`tests/`，单连接下用临时库隔离）。
 11. ✅ **`sys.frozen` 路径判断散落 4 处** → **已抽 `paths.py`**。`resource_dir()`（只读资源）/`data_dir()`（可写数据）统一 `app.py`/`database.py`/`preferences.py` 三处；`main.py` 因处于 sys.path 引导阶段，保留内联判断（无法 import 工具，鸡生蛋）。
 
 ## 9. 演进与待细化项

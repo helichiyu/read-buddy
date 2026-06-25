@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['E:\\personal\\read-buddy\\backend\\main.py'],
+    ['e:\\personal\\read-buddy\\backend\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('E:\\personal\\read-buddy\\frontend', 'frontend'), ('E:\\personal\\read-buddy\\data', 'data')],
+    datas=[('e:\\personal\\read-buddy\\frontend', 'frontend'), ('e:\\personal\\read-buddy\\data', 'data')],
     hiddenimports=['database', 'ai_service', 'app', 'chat_orchestrator', 'book_service', 'paths', 'preferences', 'tools', 'tools.base', 'tools.rate_book', 'tools.recommend_books', 'tools.accept_book', 'tools.reject_book', 'tools.discuss_book', 'tools.save_preference'],
     hookspath=[],
     hooksconfig={},
